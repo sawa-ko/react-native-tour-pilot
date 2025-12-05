@@ -1,0 +1,46 @@
+# Dependencies
+node_modules/
+
+# Build output
+lib/
+dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Testing
+coverage/
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Lock files (keep yarn.lock or package-lock.json, not both)
+# package-lock.json
+
+# Example app
+example/node_modules/
+example/.expo/
+example/dist/
+
+# Turborepo
+.turbo

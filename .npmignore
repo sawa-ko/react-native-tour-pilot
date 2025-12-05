@@ -1,0 +1,43 @@
+# Source files (we ship built lib/)
+# src/  # Actually we DO want to ship src for react-native
+
+# Development files
+.eslintrc.js
+.prettierrc
+babel.config.js
+tsconfig.json
+tsconfig.build.json
+
+# IDE
+.idea/
+.vscode/
+
+# Testing
+__tests__/
+__mocks__/
+coverage/
+*.test.ts
+*.test.tsx
+*.spec.ts
+*.spec.tsx
+
+# Example app
+example/
+
+# CI/CD
+.github/
+.circleci/
+.travis.yml
+
+# Documentation source
+docs/
+
+# Git
+.git/
+.gitignore
+
+# Misc
+*.log
+.DS_Store
+Thumbs.db
+.turbo
