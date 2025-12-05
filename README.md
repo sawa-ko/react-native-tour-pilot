@@ -8,8 +8,6 @@ A flexible, customizable tour/walkthrough library for React Native with **multi-
   <img src="https://img.shields.io/npm/l/react-native-tour-pilot" alt="license" />
 </p>
 
-![Demo](./assets/demo.gif)
-
 ## Features
 
 - ✅ **Multi-tour support** - Run multiple independent tours in your app
