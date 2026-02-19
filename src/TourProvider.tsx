@@ -20,7 +20,6 @@ import {
   BackHandler,
   Dimensions,
   Easing,
-  findNodeHandle,
   NativeModules,
   Platform,
   ScrollView,
@@ -758,29 +757,39 @@ export const TourProvider: React.FC<
       setCurrentStepState(step);
 
       if (scrollViewRef.current && step?.wrapperRef.current) {
-        const nodeHandle = findNodeHandle(scrollViewRef.current);
-        if (nodeHandle) {
-          step.wrapperRef.current.measureLayout(
-            nodeHandle as unknown as number,
+        await new Promise<void>((resolve) => {
+          const wrapperRef = step.wrapperRef.current;
+          if (!wrapperRef) {
+            resolve();
+            return;
+          }
+          wrapperRef.measureLayout(
+            scrollViewRef.current as unknown as number,
             (_x, y, _w, h) => {
               const yOffset = y > 0 ? y - h / 2 : 0;
               scrollViewRef.current?.scrollTo({ y: yOffset, animated: false });
+              // Double rAF: first frame queues the native scroll, second frame confirms it
+              requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
             },
-            // Error callback required by measureLayout API
-            () => {}
+            () => resolve()
           );
-        }
+        });
       }
 
-      setTimeout(
-        async () => {
-          if (move && step) await moveModalToStep(step);
-        },
-        scrollViewRef.current ? 100 : 0
-      );
+      if (move && step) {
+        await moveModalToStep(step);
+      }
     },
     [moveModalToStep]
   );
+
+  const remeasureCurrentStep = useCallback(async () => {
+    if (currentStep) {
+      // Allow the layout pass to complete before re-measuring (onLayout fires mid-frame)
+      await new Promise(resolve => setTimeout(resolve, 50));
+      await moveModalToStep(currentStep);
+    }
+  }, [currentStep, moveModalToStep]);
 
   const start = useCallback(
     async (
@@ -903,6 +912,7 @@ export const TourProvider: React.FC<
       goToNth,
       activeTour,
       currentStep,
+      remeasureCurrentStep,
       visible,
       isFirstStep,
       isLastStep,
@@ -921,6 +931,7 @@ export const TourProvider: React.FC<
       goToNth,
       activeTour,
       currentStep,
+      remeasureCurrentStep,
       visible,
       isFirstStep,
       isLastStep,

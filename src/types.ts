@@ -220,6 +220,8 @@ export interface TourContextValue {
   activeTour: TourKey | null;
   /** Current step being displayed */
   currentStep: Step | undefined;
+  /** Re-measures and repositions the overlay for the current active step */
+  remeasureCurrentStep: () => Promise<void>;
   /** Whether the tour overlay is visible */
   visible: boolean;
   /** Whether the current step is the first step */
