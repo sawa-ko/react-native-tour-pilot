@@ -37,12 +37,19 @@ export const TourStep: React.FC<TourStepProps> = ({
   highlightPadding,
 }) => {
   const registeredName = useRef<string | null>(null);
-  const { registerStep, unregisterStep } = useTour();
+  const { registerStep, unregisterStep, currentStep, activeTour, remeasureCurrentStep } = useTour();
   const wrapperRef = useRef<NativeMethods>(null);
 
   const measure = async (): Promise<LayoutRect | null> => {
     return new Promise((resolve) => {
+      let attempts = 0;
+      const MAX_ATTEMPTS = 60;
       const attemptMeasure = () => {
+        if (attempts >= MAX_ATTEMPTS) {
+          resolve(null);
+          return;
+        }
+        attempts++;
         if (wrapperRef.current && 'measure' in wrapperRef.current) {
           wrapperRef.current.measure((_ox, _oy, width, height, x, y) => {
             if (width === 0 && height === 0) {
@@ -107,10 +114,14 @@ export const TourStep: React.FC<TourStepProps> = ({
   const tourPilotProps = useMemo(
     () => ({
       ref: wrapperRef,
-      onLayout: () => {},
+      onLayout: () => {
+        if (currentStep?.name === name && activeTour === tourKey) {
+          void remeasureCurrentStep();
+        }
+      },
       collapsable: false,
     }),
-    []
+    [currentStep, activeTour, name, tourKey, remeasureCurrentStep]
   );
 
   // Support both 'tourPilot' and 'copilot' prop names for backwards compatibility
