@@ -768,12 +768,24 @@ export const TourProvider: React.FC<
             (_x, y, _w, h) => {
               const yOffset = y > 0 ? y - h / 2 : 0;
               scrollViewRef.current?.scrollTo({ y: yOffset, animated: false });
-              // Double rAF: first frame queues the native scroll, second frame confirms it
-              requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+
+              // Wait multiple frames for scroll and layout to complete
+              const waitFrames = (count: number) => {
+                if (count === 0) {
+                  // Add additional delay to ensure layout stability
+                  setTimeout(() => resolve(), 100);
+                  return;
+                }
+                requestAnimationFrame(() => waitFrames(count - 1));
+              };
+              waitFrames(4); // Wait 4 frames instead of 2
             },
             () => resolve()
           );
         });
+
+        // Additional delay after scroll to ensure complete stability
+        await new Promise(resolve => setTimeout(resolve, 50));
       }
 
       if (move && step) {
