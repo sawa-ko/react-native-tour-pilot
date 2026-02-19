@@ -390,9 +390,15 @@ const TourModal = forwardRef<ModalRef, ModalProps>(function TourModal(
       'hardwareBackPress',
       () => {
         if (visible) {
-          onStop().catch((_e) => {
-            /* ignore */
-          });
+          if (isFirstStep) {
+            onStop().catch((_e) => {
+              /* ignore */
+            });
+          } else {
+            onPrev().catch((_e) => {
+              /* ignore */
+            });
+          }
           return true;
         }
         return false;
@@ -400,7 +406,7 @@ const TourModal = forwardRef<ModalRef, ModalProps>(function TourModal(
     );
 
     return () => backHandler.remove();
-  }, [visible, onStop]);
+  }, [visible, onStop, onPrev, isFirstStep]);
 
   useEffect(() => {
     if (visible) {
@@ -704,13 +710,16 @@ export const TourProvider: React.FC<
     const tourSteps = steps[activeTour] || {};
     return Object.values(tourSteps)
       .filter((s) => s.visible)
-      .sort((a, b) => a.order - b.order);
+      .sort((a, b) => {
+        if (a.order !== b.order) return a.order - b.order;
+        return a.name.localeCompare(b.name);
+      });
   }, [steps, activeTour]);
 
   const stepIndex = useMemo(
     () =>
       currentStep
-        ? orderedSteps.findIndex((s) => s.order === currentStep.order)
+        ? orderedSteps.findIndex((s) => s.name === currentStep.name)
         : -1,
     [currentStep, orderedSteps]
   );
@@ -733,7 +742,16 @@ export const TourProvider: React.FC<
     async (step: Step | undefined) => {
       if (!step) return;
       const measurement = await step.measure();
-      if (!measurement) return;
+      if (!measurement) {
+        console.warn(
+          `[TourPilot] Failed to measure step "${step.name}" after 60 attempts. The component may not be rendered or is hidden.`
+        );
+        events.emit('error', {
+          tourKey: step.tourKey,
+          error: `MEASURE_FAILED: ${step.name}`,
+        });
+        return;
+      }
 
       // Use step's highlightPadding if defined, otherwise use provider's default
       const padding = step.highlightPadding ?? highlightPadding;
@@ -749,7 +767,7 @@ export const TourProvider: React.FC<
         step.borderRadius
       );
     },
-    [verticalOffset, highlightPadding]
+    [verticalOffset, highlightPadding, events]
   );
 
   const setCurrentStep = useCallback(
@@ -803,12 +821,28 @@ export const TourProvider: React.FC<
     }
   }, [currentStep, moveModalToStep]);
 
+  const stop = useCallback(async () => {
+    const tourKey = activeTour;
+    const completed = isLastStep;
+
+    await setVisibility(false);
+    setActiveTour(null);
+    setCurrentStepState(undefined);
+    scrollViewRef.current = null;
+
+    if (tourKey) events.emit('stop', { tourKey, completed });
+  }, [activeTour, isLastStep, setVisibility, events]);
+
   const start = useCallback(
     async (
       tourKey: TourKey,
       fromStep?: string,
       scrollView?: ScrollView | null
     ) => {
+      if (activeTour && activeTour !== tourKey) {
+        await stop();
+      }
+
       if (scrollView) scrollViewRef.current = scrollView;
 
       const tourSteps = steps[tourKey] || {};
@@ -823,6 +857,7 @@ export const TourProvider: React.FC<
         console.warn(
           `[TourPilot] Failed to start tour "${tourKey}" - no steps found`
         );
+        events.emit('error', { tourKey, error: 'NO_STEPS_FOUND' });
         return;
       }
 
@@ -845,20 +880,16 @@ export const TourProvider: React.FC<
 
       startTries.current = 0;
     },
-    [steps, setCurrentStep, moveModalToStep, setVisibility, events]
+    [
+      steps,
+      setCurrentStep,
+      moveModalToStep,
+      setVisibility,
+      events,
+      activeTour,
+      stop,
+    ]
   );
-
-  const stop = useCallback(async () => {
-    const tourKey = activeTour;
-    const completed = isLastStep;
-
-    await setVisibility(false);
-    setActiveTour(null);
-    setCurrentStepState(undefined);
-    scrollViewRef.current = null;
-
-    if (tourKey) events.emit('stop', { tourKey, completed });
-  }, [activeTour, isLastStep, setVisibility, events]);
 
   const goToNext = useCallback(async () => {
     const nextStep = orderedSteps[stepIndex + 1];
@@ -888,6 +919,12 @@ export const TourProvider: React.FC<
 
   const goToNth = useCallback(
     async (n: number) => {
+      if (n < 1 || n > orderedSteps.length) {
+        console.warn(
+          `[TourPilot] Invalid step number ${n}. Valid range: 1-${orderedSteps.length}`
+        );
+        return;
+      }
       const step = orderedSteps[n - 1];
       if (step) {
         events.emit('stepChange', {

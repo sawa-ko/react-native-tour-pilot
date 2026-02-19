@@ -180,6 +180,8 @@ export type TourEvents = {
   stop: { tourKey: TourKey; completed: boolean };
   /** Emitted when the current step changes */
   stepChange: { tourKey: TourKey; step: Step | undefined; stepNumber: number };
+  /** Emitted when an error occurs */
+  error: { tourKey: TourKey; error: string };
 };
 
 /**
