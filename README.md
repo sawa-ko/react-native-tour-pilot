@@ -19,7 +19,7 @@ A flexible, customizable tour/walkthrough library for React Native with **multi-
 - ✅ **Customizable tooltips** - Bring your own tooltip component
 - ✅ **TypeScript first** - Full type definitions included
 - ✅ **Animated transitions** - Smooth animations between steps
-- ✅ **Cross-platform** - Works on iOS and Android
+- ✅ **Cross-platform** - Works on iOS, Android and Web
 
 ## Installation
 
