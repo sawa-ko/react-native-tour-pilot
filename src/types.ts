@@ -6,6 +6,9 @@
 import type { NativeMethods, ScrollView, ViewStyle } from 'react-native';
 import type { ReactElement, RefObject } from 'react';
 
+// Cross-platform ref target: NativeMethods on iOS/Android, HTMLElement on web
+export type NativeOrHTMLElement = NativeMethods | HTMLElement;
+
 /**
  * Unique identifier for a tour. Used to manage multiple independent tours.
  * @example "onboarding-tour", "feature-discovery", "settings-guide"
@@ -57,7 +60,7 @@ export interface Step {
   /** Whether this step is currently visible/active */
   visible: boolean;
   /** Reference to the wrapped component */
-  wrapperRef: RefObject<NativeMethods>;
+  wrapperRef: RefObject<NativeOrHTMLElement>;
   /** Function to measure the step's position and size */
   measure: () => Promise<LayoutRect | null>;
   /** Shape of the spotlight mask for this step */

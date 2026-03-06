@@ -1,15 +1,16 @@
 /**
- * TourStep - Wrapper component to mark elements as tour steps
+ * TourStep - Web-compatible wrapper component to mark elements as tour steps
  */
 
 import React, { cloneElement, useEffect, useMemo, useRef } from 'react';
-import type { NativeMethods } from 'react-native';
 
 import { useTour } from './TourProvider';
 import type { LayoutRect, TourStepProps } from './types';
 
 /**
- * TourStep - Wrap elements you want to highlight in your tour
+ * TourStep - Wrap elements you want to highlight in your tour (web version)
+ *
+ * Uses getBoundingClientRect() instead of NativeMethods.measure for web.
  *
  * @example
  * ```tsx
@@ -44,7 +45,7 @@ export const TourStep: React.FC<TourStepProps> = ({
     activeTour,
     remeasureCurrentStep,
   } = useTour();
-  const wrapperRef = useRef<NativeMethods>(null);
+  const wrapperRef = useRef<HTMLElement>(null);
 
   const measure = async (): Promise<LayoutRect | null> => {
     return new Promise((resolve) => {
@@ -56,14 +57,19 @@ export const TourStep: React.FC<TourStepProps> = ({
           return;
         }
         attempts++;
-        if (wrapperRef.current && 'measure' in wrapperRef.current) {
-          wrapperRef.current.measure((_ox, _oy, width, height, x, y) => {
-            if (width === 0 && height === 0) {
-              requestAnimationFrame(attemptMeasure);
-            } else {
-              resolve({ x, y, width, height });
-            }
-          });
+        const node = wrapperRef.current;
+        if (node && typeof node.getBoundingClientRect === 'function') {
+          const rect = node.getBoundingClientRect();
+          if (rect.width === 0 && rect.height === 0) {
+            requestAnimationFrame(attemptMeasure);
+          } else {
+            resolve({
+              x: rect.left,
+              y: rect.top,
+              width: rect.width,
+              height: rect.height,
+            });
+          }
         } else {
           requestAnimationFrame(attemptMeasure);
         }
@@ -84,7 +90,8 @@ export const TourStep: React.FC<TourStepProps> = ({
         text,
         tourKey,
         visible: true,
-        wrapperRef,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        wrapperRef: wrapperRef as any,
         measure,
         maskShape,
         borderRadius,
@@ -138,7 +145,7 @@ export const TourStep: React.FC<TourStepProps> = ({
 };
 
 /**
- * Higher-order component to make any component walkthrough-able
+ * Higher-order component to make any component walkthrough-able (web version)
  *
  * @example
  * ```tsx

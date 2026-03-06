@@ -1,5 +1,13 @@
 /**
- * TourProvider - Main provider component for the tour system
+ * TourProvider - Web-compatible version for React Native Web
+ *
+ * Key differences from TourProvider.tsx:
+ * - No BackHandler (not available on web)
+ * - No NativeModules (not available on web)
+ * - No StatusBar.currentHeight (always 0 on web)
+ * - Animated.Value replaced with useState for tooltip/step-number positioning
+ * - SvgMask uses static react-native-svg Path updated via useState (no setNativeProps)
+ * - Portal container uses position: fixed via inline style for true full-screen overlay
  */
 
 import React, {
@@ -16,14 +24,9 @@ import React, {
 } from 'react';
 import type { PropsWithChildren } from 'react';
 import {
-  Animated,
-  BackHandler,
   Dimensions,
   Easing,
-  NativeModules,
-  Platform,
   ScrollView,
-  StatusBar,
   StyleSheet,
   Text,
   View,
@@ -46,19 +49,6 @@ import type {
 } from './types';
 import DefaultTooltip from './ToolTip';
 
-// Optional Portal import - gracefully handle if not available
-let Portal: React.ComponentType<{
-  hostName?: string;
-  children: React.ReactNode;
-}> | null = null;
-try {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
-  const portalModule = require('@gorhom/portal');
-  Portal = portalModule.Portal;
-} catch (_e) {
-  // Portal not available, will use fallback rendering
-}
-
 // Constants
 const STEP_NUMBER_RADIUS = 14;
 const STEP_NUMBER_DIAMETER = STEP_NUMBER_RADIUS * 2;
@@ -68,7 +58,12 @@ const DEFAULT_HIGHLIGHT_PADDING = 4;
 const DEFAULT_ARROW_SIZE = 6;
 const MAX_START_TRIES = 120;
 
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+const getWindowDimensions = () => {
+  if (typeof window !== 'undefined') {
+    return { width: window.innerWidth, height: window.innerHeight };
+  }
+  return Dimensions.get('window');
+};
 
 // Context
 const TourContext = createContext<TourContextValue | undefined>(undefined);
@@ -149,156 +144,84 @@ const DefaultStepNumber: React.FC<StepNumberProps> = ({
   </View>
 );
 
-// SVG Mask Component
-const AnimatedPath = Animated.createAnimatedComponent(Path);
+// Path generator (pure function, no Animated dependency)
+function generateStaticPath(
+  position: ValueXY,
+  size: ValueXY,
+  canvasSize: ValueXY,
+  borderRadius: number,
+  maskShape: MaskShape
+): string {
+  const outerPath = `M0,0H${canvasSize.x}V${canvasSize.y}H0V0Z`;
+  let innerPath: string;
 
-interface SvgMaskProps {
+  switch (maskShape) {
+    case 'circle': {
+      const diameter = Math.min(size.x, size.y);
+      const radius = diameter / 2;
+      const centerX = position.x + size.x / 2;
+      const centerY = position.y + size.y / 2;
+      innerPath = `M${centerX - radius},${centerY}A${radius},${radius} 0 1 0 ${centerX + radius},${centerY}A${radius},${radius} 0 1 0 ${centerX - radius},${centerY}Z`;
+      break;
+    }
+    case 'rectangle': {
+      innerPath = `M${position.x},${position.y}H${position.x + size.x}V${position.y + size.y}H${position.x}V${position.y}Z`;
+      break;
+    }
+    case 'rounded-rectangle':
+    default: {
+      const r = Math.min(borderRadius, size.x / 2, size.y / 2);
+      innerPath = `M${position.x + r},${position.y}H${position.x + size.x - r}A${r},${r} 0 0 1 ${position.x + size.x},${position.y + r}V${position.y + size.y - r}A${r},${r} 0 0 1 ${position.x + size.x - r},${position.y + size.y}H${position.x + r}A${r},${r} 0 0 1 ${position.x},${position.y + size.y - r}V${position.y + r}A${r},${r} 0 0 1 ${position.x + r},${position.y}Z`;
+      break;
+    }
+  }
+
+  return `${outerPath}${innerPath}`;
+}
+
+// Web-compatible SVG Mask Component (no Animated, no setNativeProps)
+interface SvgMaskWebProps {
   size: ValueXY;
   position: ValueXY;
   canvasSize: ValueXY;
-  animated: boolean;
-  animationDuration: number;
-  easing: (value: number) => number;
   backdropColor: string;
   borderRadius: number;
   maskShape: MaskShape;
   onClick?: () => boolean;
 }
 
-const SvgMask: React.FC<SvgMaskProps> = ({
+const SvgMaskWeb: React.FC<SvgMaskWebProps> = ({
   size,
   position,
   canvasSize,
-  animated,
-  animationDuration,
-  easing,
   backdropColor,
   borderRadius,
   maskShape,
   onClick,
 }) => {
-  const sizeValue = useRef(
-    new Animated.ValueXY({ x: size.x, y: size.y })
-  ).current;
-  const positionValue = useRef(
-    new Animated.ValueXY({ x: position.x, y: position.y })
-  ).current;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const pathRef = useRef<any>(null);
-
-  const generatePath = useCallback(() => {
-    const posX =
-      (positionValue.x as unknown as { _value: number })._value ?? position.x;
-    const posY =
-      (positionValue.y as unknown as { _value: number })._value ?? position.y;
-    const sizeX =
-      (sizeValue.x as unknown as { _value: number })._value ?? size.x;
-    const sizeY =
-      (sizeValue.y as unknown as { _value: number })._value ?? size.y;
-
-    // Outer rectangle (full canvas)
-    const outerPath = `M0,0H${canvasSize.x}V${canvasSize.y}H0V0Z`;
-
-    let innerPath: string;
-
-    switch (maskShape) {
-      case 'circle': {
-        const diameter = Math.min(sizeX, sizeY);
-        const radius = diameter / 2;
-        const centerX = posX + sizeX / 2;
-        const centerY = posY + sizeY / 2;
-
-        innerPath = `M${centerX - radius},${centerY}A${radius},${radius} 0 1 0 ${centerX + radius},${centerY}A${radius},${radius} 0 1 0 ${centerX - radius},${centerY}Z`;
-        break;
-      }
-
-      case 'rectangle': {
-        innerPath = `M${posX},${posY}H${posX + sizeX}V${posY + sizeY}H${posX}V${posY}Z`;
-        break;
-      }
-
-      case 'rounded-rectangle':
-      default: {
-        const r = Math.min(borderRadius, sizeX / 2, sizeY / 2);
-        innerPath = `M${posX + r},${posY}H${posX + sizeX - r}A${r},${r} 0 0 1 ${posX + sizeX},${posY + r}V${posY + sizeY - r}A${r},${r} 0 0 1 ${posX + sizeX - r},${posY + sizeY}H${posX + r}A${r},${r} 0 0 1 ${posX},${posY + sizeY - r}V${posY + r}A${r},${r} 0 0 1 ${posX + r},${posY}Z`;
-        break;
-      }
-    }
-
-    return `${outerPath}${innerPath}`;
-  }, [
-    canvasSize,
-    position,
-    size,
-    borderRadius,
-    maskShape,
-    positionValue,
-    sizeValue,
-  ]);
-
-  const updatePath = useCallback(() => {
-    const d = generatePath();
-    if (pathRef.current) {
-      (
-        pathRef.current as unknown as {
-          setNativeProps: (props: { d: string }) => void;
-        }
-      ).setNativeProps({ d });
-    }
-  }, [generatePath]);
-
-  useEffect(() => {
-    const listenerId = positionValue.addListener(updatePath);
-    const sizeListenerId = sizeValue.addListener(updatePath);
-    return () => {
-      positionValue.removeListener(listenerId);
-      sizeValue.removeListener(sizeListenerId);
-    };
-  }, [positionValue, sizeValue, updatePath]);
-
-  useEffect(() => {
-    if (animated) {
-      Animated.parallel([
-        Animated.timing(sizeValue, {
-          toValue: { x: size.x, y: size.y },
-          duration: animationDuration,
-          easing,
-          useNativeDriver: false,
-        }),
-        Animated.timing(positionValue, {
-          toValue: { x: position.x, y: position.y },
-          duration: animationDuration,
-          easing,
-          useNativeDriver: false,
-        }),
-      ]).start();
-    } else {
-      sizeValue.setValue({ x: size.x, y: size.y });
-      positionValue.setValue({ x: position.x, y: position.y });
-    }
-  }, [
-    animated,
-    animationDuration,
-    easing,
-    position,
-    positionValue,
-    size,
-    sizeValue,
-  ]);
+  // Compute path directly via useMemo; using full object refs as deps is correct
+  // since inline objects are recreated only when parent state changes
+  const pathD = useMemo(
+    () =>
+      generateStaticPath(position, size, canvasSize, borderRadius, maskShape),
+    [position, size, canvasSize, borderRadius, maskShape]
+  );
 
   return (
     <View
-      style={StyleSheet.absoluteFill}
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      style={[StyleSheet.absoluteFill, { position: 'fixed' as any }]}
       onStartShouldSetResponder={onClick}
       pointerEvents="box-only"
     >
-      <Svg pointerEvents="none" width={canvasSize.x} height={canvasSize.y}>
-        <AnimatedPath
-          ref={pathRef}
-          fill={backdropColor}
-          fillRule="evenodd"
-          d={generatePath()}
-        />
+      <Svg
+        pointerEvents="none"
+        width={canvasSize.x}
+        height={canvasSize.y}
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        style={{ position: 'absolute' as any, top: 0, left: 0 }}
+      >
+        <Path fill={backdropColor} fillRule="evenodd" d={pathD} />
       </Svg>
     </View>
   );
@@ -328,13 +251,13 @@ interface ModalProps extends TourProviderOptions {
 
 const TourModal = forwardRef<ModalRef, ModalProps>(function TourModal(
   {
-    easing = Easing.elastic(0.7),
+    easing: _easing = Easing.elastic(0.7),
     animationDuration = 400,
     tooltipComponent: TooltipComponent = DefaultTooltip,
     tooltipStyle = {},
     stepNumberComponent: StepNumberComponent = DefaultStepNumber,
-    animated = typeof NativeModules.RNSVGSvgViewManager !== 'undefined',
-    androidStatusBarVisible = false,
+    // On web, animated is always true (CSS transitions handle smoothness)
+    animated: _animated = true,
     backdropColor = 'rgba(0, 0, 0, 0.75)',
     labels = {
       finish: 'Finish',
@@ -356,88 +279,73 @@ const TourModal = forwardRef<ModalRef, ModalProps>(function TourModal(
     onStop,
     onNext,
     onPrev,
-    portalHostName = 'tour-pilot-portal',
   },
   ref
 ) {
   const [tooltipStyles, setTooltipStyles] = useState<ViewStyle>({});
   const [arrowStyles, setArrowStyles] = useState<ViewStyle>({});
-  const [animatedValues] = useState({
-    top: new Animated.Value(0),
-    stepNumberLeft: new Animated.Value(0),
-  });
+  // Plain state instead of Animated.Value for web compatibility
+  const [stepNumberTop, setStepNumberTop] = useState(0);
+  const [stepNumberLeft, setStepNumberLeft] = useState(0);
+
+  const initialDims = getWindowDimensions();
   const [layout, setLayout] = useState<LayoutRect>({
     x: 0,
     y: 0,
-    width: SCREEN_WIDTH,
-    height:
-      SCREEN_HEIGHT +
-      (Platform.OS === 'android' ? (StatusBar.currentHeight ?? 0) : 0),
+    width: initialDims.width,
+    height: initialDims.height,
   });
   const [maskRect, setMaskRect] = useState<LayoutRect | undefined>();
   const [currentMaskShape, setCurrentMaskShape] =
     useState<MaskShape>('rounded-rectangle');
   const [currentBorderRadius, setCurrentBorderRadius] =
     useState<number>(borderRadius);
-  const [isAnimated, setIsAnimated] = useState(false);
   const [containerVisible, setContainerVisible] = useState(false);
 
-  // Handle Android back button
-  useEffect(() => {
-    if (!visible) return;
-
-    const backHandler = BackHandler.addEventListener(
-      'hardwareBackPress',
-      () => {
-        if (visible) {
-          onStop().catch((_e) => {
-            /* ignore */
-          });
-          return true;
-        }
-        return false;
-      }
-    );
-
-    return () => backHandler.remove();
-  }, [visible, onStop]);
+  // No BackHandler on web
 
   useEffect(() => {
     if (visible) {
       setContainerVisible(true);
-      const { width, height } = Dimensions.get('window');
-      setLayout({
-        x: 0,
-        y: 0,
-        width,
-        height:
-          height +
-          (Platform.OS === 'android' ? (StatusBar.currentHeight ?? 0) : 0),
-      });
+      const dims = getWindowDimensions();
+      setLayout({ x: 0, y: 0, width: dims.width, height: dims.height });
     }
   }, [visible]);
 
   useEffect(() => {
     if (!visible) {
-      setIsAnimated(false);
       setContainerVisible(false);
     }
   }, [visible]);
 
-  // Listen for dimension changes
+  // Listen for dimension changes (works on web via Dimensions API or resize)
   useEffect(() => {
     const subscription = Dimensions.addEventListener('change', ({ window }) => {
-      setLayout({
-        x: 0,
-        y: 0,
-        width: window.width,
-        height:
-          window.height +
-          (Platform.OS === 'android' ? (StatusBar.currentHeight ?? 0) : 0),
-      });
+      setLayout({ x: 0, y: 0, width: window.width, height: window.height });
     });
 
-    return () => subscription.remove();
+    // Also listen to native window resize for web
+    const handleResize = () => {
+      if (typeof window !== 'undefined') {
+        setLayout({
+          x: 0,
+          y: 0,
+          width: window.innerWidth,
+          height: window.innerHeight,
+        });
+      }
+    };
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('resize', handleResize);
+    }
+
+    return () => {
+      subscription.remove();
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('resize', handleResize);
+      }
+    };
   }, []);
 
   const _animateMove = useCallback(
@@ -448,18 +356,14 @@ const TourModal = forwardRef<ModalRef, ModalProps>(function TourModal(
     ) => {
       const measuredLayout = layout;
 
-      if (!androidStatusBarVisible && Platform.OS === 'android') {
-        rect.y -= StatusBar.currentHeight ?? 0;
-      }
-
       setCurrentMaskShape(maskShape);
       setCurrentBorderRadius(stepBorderRadius ?? borderRadius);
 
-      let stepNumberLeft = rect.x - STEP_NUMBER_RADIUS;
-      if (stepNumberLeft < 0) {
-        stepNumberLeft = rect.x + rect.width - STEP_NUMBER_RADIUS;
-        if (stepNumberLeft > measuredLayout.width - STEP_NUMBER_DIAMETER) {
-          stepNumberLeft = measuredLayout.width - STEP_NUMBER_DIAMETER;
+      let snLeft = rect.x - STEP_NUMBER_RADIUS;
+      if (snLeft < 0) {
+        snLeft = rect.x + rect.width - STEP_NUMBER_RADIUS;
+        if (snLeft > measuredLayout.width - STEP_NUMBER_DIAMETER) {
+          snLeft = measuredLayout.width - STEP_NUMBER_DIAMETER;
         }
       }
 
@@ -513,26 +417,9 @@ const TourModal = forwardRef<ModalRef, ModalProps>(function TourModal(
         arrow.left = (tooltip.left as number) + margin;
       }
 
-      const animate = [
-        ['top', rect.y] as const,
-        ['stepNumberLeft', stepNumberLeft] as const,
-      ];
-
-      if (isAnimated) {
-        Animated.parallel(
-          animate.map(([key, value]) =>
-            Animated.timing(animatedValues[key], {
-              toValue: value,
-              duration: animationDuration,
-              easing,
-              useNativeDriver: false,
-            })
-          )
-        ).start();
-      } else {
-        animate.forEach(([key, value]) => animatedValues[key].setValue(value));
-      }
-
+      // Use plain state instead of Animated.Value
+      setStepNumberTop(rect.y - STEP_NUMBER_RADIUS);
+      setStepNumberLeft(snLeft);
       setTooltipStyles(tooltip);
       setArrowStyles(arrow);
       setMaskRect({
@@ -542,18 +429,7 @@ const TourModal = forwardRef<ModalRef, ModalProps>(function TourModal(
         y: Math.floor(Math.max(rect.y, 0)),
       });
     },
-    [
-      androidStatusBarVisible,
-      animatedValues,
-      animationDuration,
-      arrowColor,
-      arrowSize,
-      borderRadius,
-      easing,
-      isAnimated,
-      layout,
-      margin,
-    ]
+    [arrowColor, arrowSize, borderRadius, layout, margin]
   );
 
   const animateMove = useCallback(
@@ -589,25 +465,24 @@ const TourModal = forwardRef<ModalRef, ModalProps>(function TourModal(
 
   if (!modalVisible) return null;
 
+  // CSS transition string passed through React Native Web's style prop
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const transitionStyle: any = {
+    transition: `top ${animationDuration}ms ease, bottom ${animationDuration}ms ease, left ${animationDuration}ms ease, right ${animationDuration}ms ease`,
+  };
+
   const modalContent = (
     <View
-      style={[
-        defaultStyles.portalContainer,
-        {
-          paddingTop: Platform.OS === 'android' ? StatusBar.currentHeight : 0,
-        },
-      ]}
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      style={[defaultStyles.portalContainer, { position: 'fixed' as any }]}
       pointerEvents="box-none"
     >
       <View style={defaultStyles.container} pointerEvents="box-none">
         {contentVisible && maskRect && (
-          <SvgMask
+          <SvgMaskWeb
             size={{ x: maskRect.width, y: maskRect.height }}
             position={{ x: maskRect.x, y: maskRect.y }}
             canvasSize={{ x: layout.width, y: layout.height }}
-            animated={animated}
-            animationDuration={animationDuration}
-            easing={easing}
             backdropColor={backdropColor}
             borderRadius={currentBorderRadius}
             maskShape={currentMaskShape}
@@ -617,36 +492,37 @@ const TourModal = forwardRef<ModalRef, ModalProps>(function TourModal(
 
         {contentVisible && currentStep && (
           <>
-            <Animated.View
+            <View
               style={[
                 defaultStyles.stepNumberContainer,
-                {
-                  left: animatedValues.stepNumberLeft,
-                  top: Animated.add(
-                    animatedValues.top,
-                    -STEP_NUMBER_RADIUS
-                  ) as unknown as number,
-                },
+                { left: stepNumberLeft, top: stepNumberTop },
+                transitionStyle,
               ]}
             >
               <StepNumberComponent
                 currentStepNumber={currentStepNumber}
                 totalStepsNumber={totalStepsNumber}
               />
-            </Animated.View>
+            </View>
 
             {arrowSize > 0 && (
-              <Animated.View
+              <View
                 style={[
                   defaultStyles.arrow,
                   { borderWidth: arrowSize },
                   arrowStyles,
+                  transitionStyle,
                 ]}
               />
             )}
 
-            <Animated.View
-              style={[defaultStyles.tooltip, tooltipStyles, tooltipStyle]}
+            <View
+              style={[
+                defaultStyles.tooltip,
+                tooltipStyles,
+                tooltipStyle,
+                transitionStyle,
+              ]}
               pointerEvents="box-none"
             >
               <View pointerEvents="auto">
@@ -662,30 +538,25 @@ const TourModal = forwardRef<ModalRef, ModalProps>(function TourModal(
                   stop={onStop}
                 />
               </View>
-            </Animated.View>
+            </View>
           </>
         )}
       </View>
     </View>
   );
 
-  // Use Portal if available, otherwise render directly
-  if (Portal) {
-    return <Portal hostName={portalHostName}>{modalContent}</Portal>;
-  }
-
   return modalContent;
 });
 
 /**
- * TourProvider - Wrap your app with this provider to enable tours
+ * TourProvider - Wrap your app with this provider to enable tours (web version)
  */
 export const TourProvider: React.FC<
   PropsWithChildren<TourProviderOptions & { portalHostName?: string }>
 > = ({
   children,
   verticalOffset = 0,
-  portalHostName = 'tour-pilot-portal',
+  portalHostName: _portalHostName = 'tour-pilot-portal',
   highlightPadding = DEFAULT_HIGHLIGHT_PADDING,
   ...options
 }) => {
@@ -735,7 +606,6 @@ export const TourProvider: React.FC<
       const measurement = await step.measure();
       if (!measurement) return;
 
-      // Use step's highlightPadding if defined, otherwise use provider's default
       const padding = step.highlightPadding ?? highlightPadding;
 
       await modalRef.current?.animateMove(
@@ -756,38 +626,8 @@ export const TourProvider: React.FC<
     async (step: Step | undefined, move = true) => {
       setCurrentStepState(step);
 
-      if (scrollViewRef.current && step?.wrapperRef.current) {
-        await new Promise<void>((resolve) => {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const wrapperRef = step.wrapperRef.current as any;
-          if (!wrapperRef) {
-            resolve();
-            return;
-          }
-          wrapperRef.measureLayout(
-            scrollViewRef.current as unknown as number,
-            (_x: number, y: number, _w: number, h: number) => {
-              const yOffset = y > 0 ? y - h / 2 : 0;
-              scrollViewRef.current?.scrollTo({ y: yOffset, animated: false });
-
-              // Wait multiple frames for scroll and layout to complete
-              const waitFrames = (count: number) => {
-                if (count === 0) {
-                  // Add additional delay to ensure layout stability
-                  setTimeout(() => resolve(), 100);
-                  return;
-                }
-                requestAnimationFrame(() => waitFrames(count - 1));
-              };
-              waitFrames(4); // Wait 4 frames instead of 2
-            },
-            () => resolve()
-          );
-        });
-
-        // Additional delay after scroll to ensure complete stability
-        await new Promise((resolve) => setTimeout(resolve, 50));
-      }
+      // No measureLayout on web - skip scroll handling
+      // getBoundingClientRect in TourStep.web.tsx returns viewport-relative coords
 
       if (move && step) {
         await moveModalToStep(step);
@@ -798,7 +638,6 @@ export const TourProvider: React.FC<
 
   const remeasureCurrentStep = useCallback(async () => {
     if (currentStep) {
-      // Allow the layout pass to complete before re-measuring (onLayout fires mid-frame)
       await new Promise((resolve) => setTimeout(resolve, 50));
       await moveModalToStep(currentStep);
     }
@@ -961,7 +800,6 @@ export const TourProvider: React.FC<
       <TourModal
         ref={modalRef}
         {...options}
-        portalHostName={portalHostName}
         currentStep={currentStep}
         visible={visible}
         isFirstStep={isFirstStep}
@@ -981,7 +819,8 @@ const defaultStyles = StyleSheet.create({
   portalContainer: {
     ...StyleSheet.absoluteFillObject,
     zIndex: ZINDEX,
-    elevation: ZINDEX,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    elevation: ZINDEX as any,
   },
   container: {
     flex: 1,
@@ -997,7 +836,6 @@ const defaultStyles = StyleSheet.create({
     backgroundColor: 'transparent',
     borderRadius: 0,
     overflow: 'visible',
-    ...(Platform.OS === 'android' && { elevation: 50 }),
   },
   stepNumberContainer: {
     position: 'absolute',
