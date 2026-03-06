@@ -49,4 +49,5 @@ export type {
   // Utility types
   Labels,
   SvgMaskPathFunction,
+  NativeOrHTMLElement,
 } from './types';
